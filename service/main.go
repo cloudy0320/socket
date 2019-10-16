@@ -64,9 +64,14 @@ func main() {
 			newUser.Name = array[0]
 			users = append(users, *newUser)
 		} else if array[2] == "1" {
+			fmt.Println(users)
 			for i, v := range users {
-				if v.Name == array[0] {
+				if v.Name == array[0] && v.conn == nil {
 					users[i].conn = conn
+				} else {
+					conn.Write([]byte("这个账号已经被登录了！"))
+					conn.Close()
+					continue
 				}
 			}
 		} else {
