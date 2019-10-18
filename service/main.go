@@ -50,12 +50,14 @@ func main() {
 	checkError(err)
 	get()
 	for {
+	A:
 		conn, err := listener.Accept()
 		if err != nil {
 			continue
 		}
 		request := make([]byte, 128)
-		conn.Read(request)
+		_, err = conn.Read(request)
+		checkError(err)
 		array := make([]string, 128)
 		array = strings.Split(string(request), ";")
 		if array[2] == "2" {
@@ -68,10 +70,11 @@ func main() {
 			for i, v := range users {
 				if v.Name == array[0] && v.conn == nil {
 					users[i].conn = conn
-				} else {
-					conn.Write([]byte("这个账号已经被登录了！"))
+				} else if v.Name == array[0] && v.conn != nil {
+					_, err = conn.Write([]byte("这个账号已经被登录了！"))
+					checkError(err)
 					conn.Close()
-					continue
+					goto A
 				}
 			}
 		} else {
@@ -92,8 +95,9 @@ func handleClient(conn net.Conn, name string) {
 	request := make([]byte, 128)                          // set maxium request length to 128B to prevent flood attack                                // close connection before exit
 	for {
 		read_len, err := conn.Read(request)
+		//fmt.Printf("长度：%d", read_len)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println()
 			del(conn)
 			conn.Close()
 			break

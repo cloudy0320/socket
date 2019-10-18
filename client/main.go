@@ -128,9 +128,13 @@ chat:
 }
 
 func many(conn net.Conn, ch chan int) {
-	message := ""
 	for {
+		message := ""
 		fmt.Scanln(&message)
+		if message == "" {
+			fmt.Println("不能输入为空")
+			continue
+		}
 		if message == "/change" {
 			conn.Write([]byte(message))
 			go one(conn, ch)
