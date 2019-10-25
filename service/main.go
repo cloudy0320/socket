@@ -6,7 +6,9 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"net"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type User struct {
@@ -29,6 +31,8 @@ type Message struct {
 }
 
 var users []user
+
+var maxSize int = 10
 
 func init() {
 	orm.RegisterDriver("mysql", orm.DRMySQL)
@@ -79,7 +83,6 @@ func handleClient(conn net.Conn) {
 		select {
 		case array := <-readChan:
 			if array[0] == "login" {
-				fmt.Println("登录")
 				writeLoginChan <- array
 			} else if array[0] == "register" {
 				writeRegisterChan <- array
@@ -87,22 +90,69 @@ func handleClient(conn net.Conn) {
 				writeOneChan <- array
 			} else if array[0] == "many" {
 				writeManyChan <- array
+			} else if array[0] == "heart" {
+				continue
 			}
 		case stop := <-stopChan:
 			if stop {
 				return
 			}
+		case <-time.After(time.Second * 30):
+			fmt.Println("连接中断")
+			return
 		}
 	}
 }
 
 func readConn(conn net.Conn, readChan chan<- []string, stopChan chan<- bool) {
 	for {
-		data := make([]byte, 128)
-		_, err := conn.Read(data)
+		l := make([]byte, 4)
+		dataTemp := make([]byte, maxSize)
+		data := make([]byte, 0)
+		n, err := conn.Read(l)
+		if err != nil || n == 0 {
+			fmt.Println(err)
+			stopChan <- true
+		}
+		fmt.Println("读取的长度：" + string(l))
+		length, err := strconv.Atoi(string(l))
+		if err != nil {
+			fmt.Println(err)
+
+		}
+		fmt.Println("实际长度:" + string(length))
+		_, err = conn.Read(dataTemp)
 		if err != nil {
 			fmt.Println(err)
 			stopChan <- true
+		}
+		if n == 0 {
+			stopChan <- true
+		}
+		fmt.Println("数据体：" + string(dataTemp))
+		if length <= maxSize {
+			data = dataTemp[:length]
+		} else {
+			data = append(data, dataTemp...)
+			for i := 0; i < length/maxSize; i++ {
+				if i+1 == length/maxSize {
+					dataTemp := make([]byte, length%maxSize)
+					_, err = conn.Read(dataTemp)
+					if err != nil {
+						fmt.Println(err)
+						stopChan <- true
+					}
+					fmt.Println("最后一次循环：" + string(dataTemp))
+					data = append(data, dataTemp...)
+				} else {
+					_, err = conn.Read(dataTemp)
+					if err != nil {
+						fmt.Println(err)
+						stopChan <- true
+					}
+					data = append(data, dataTemp...)
+				}
+			}
 		}
 		array := make([]string, 128)
 		array = strings.Split(string(data), ";")
@@ -124,8 +174,10 @@ func writeLoginConn(conn net.Conn, writeChan <-chan []string, stopChan chan<- bo
 				checkError(err)
 				check(*name, conn)
 			} else if array[1] == v.Name && v.conn != nil {
+				users[i].conn = conn
 				_, err := conn.Write([]byte("2"))
 				checkError(err)
+				check(*name, conn)
 			}
 		}
 	}
@@ -221,6 +273,7 @@ func checkError(err error) {
 }
 
 func del(conn net.Conn) {
+	fmt.Println(conn.RemoteAddr().String() + "已经断开")
 	for i, v := range users {
 		if v.conn == conn {
 			users[i].conn = nil
@@ -263,5 +316,4 @@ func check(name string, conn net.Conn) {
 		s := strings.Join(response, "\n")
 		conn.Write([]byte(s))
 	}
-	fmt.Println(err)
 }

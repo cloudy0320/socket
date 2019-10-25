@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
+	"time"
 )
 
 var (
@@ -19,6 +21,7 @@ func main() {
 	checkError(err)
 	conn, err := net.DialTCP("tcp", nil, address)
 	checkError(err)
+	go heart(conn)
 	recvData := make([]byte, 128)
 	kind = "login"
 	for {
@@ -30,6 +33,9 @@ func main() {
 			fmt.Println("只能输入1和2")
 			continue
 		}
+		if flag == "2" {
+			kind = "register"
+		}
 		break
 	}
 	for {
@@ -37,7 +43,7 @@ func main() {
 		fmt.Print("输入你的姓名:")
 		_, err = fmt.Scanln(&name)
 		checkError(err)
-		_, err = conn.Write([]byte(kind + ";" + name + ";"))
+		_, err = conn.Write([]byte(request(kind + ";" + name + ";")))
 		checkError(err)
 		n, err := conn.Read(recvData)
 		if err != nil {
@@ -109,6 +115,9 @@ func receive(conn net.Conn) {
 		if err != nil {
 			checkError(err)
 			break
+		}
+		if n == 0 {
+			break
 		} else {
 			recvStr := string(recvData[:n])
 			fmt.Println(recvStr)
@@ -120,7 +129,7 @@ func one(conn net.Conn, ch chan int) {
 Again:
 	for {
 		kind = "one"
-		_, err := conn.Write([]byte("many" + ";" + "说" + ";" + "/list" + ";"))
+		_, err := conn.Write([]byte(request("many" + ";" + "说" + ";" + "/list" + ";")))
 		checkError(err)
 		fmt.Println("请输入你要聊天的用户名")
 		toName := ""
@@ -135,7 +144,7 @@ Again:
 				go many(conn, ch)
 				return
 			} else {
-				_, err = conn.Write([]byte(kind + ";" + message + ";" + toName + ";"))
+				_, err = conn.Write([]byte(request(kind + ";" + message + ";" + toName + ";")))
 				checkError(err)
 			}
 		}
@@ -156,8 +165,26 @@ func many(conn net.Conn, ch chan int) {
 			go one(conn, ch)
 			return
 		} else {
-			_, err := conn.Write([]byte(kind + ";" + name + "说" + ";" + message + ";"))
+			_, err = conn.Write([]byte(request(kind + ";" + name + "说" + ";" + message + ";")))
+			_, err = conn.Write([]byte(request(kind + ";" + name + "说" + ";" + message + ";")))
 			checkError(err)
 		}
+	}
+}
+
+func request(s string) string {
+	msgLen := fmt.Sprintf("%04s", strconv.Itoa(len(s)))
+	return msgLen + s
+}
+
+func heart(conn net.Conn) {
+	for {
+		_, err := conn.Write([]byte(request("heart")))
+		if err != nil {
+			fmt.Println("连接好像出了点问题，正在尝试重连")
+		} else {
+			fmt.Println("心跳检测")
+		}
+		time.Sleep(10 * time.Second)
 	}
 }
