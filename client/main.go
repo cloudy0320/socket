@@ -182,6 +182,19 @@ func heart(conn net.Conn) {
 		_, err := conn.Write([]byte(request("heart")))
 		if err != nil {
 			fmt.Println("连接好像出了点问题，正在尝试重连")
+			for {
+				address, err := net.ResolveTCPAddr("tcp", ":1200")
+				checkError(err)
+				conn, err = net.DialTCP("tcp", nil, address)
+				fmt.Println(err)
+				if err == nil {
+					if name != "" {
+						_, err = conn.Write([]byte(request(kind + ";" + name + ";")))
+						checkError(err)
+					}
+					break
+				}
+			}
 		} else {
 			fmt.Println("心跳检测")
 		}
