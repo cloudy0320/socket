@@ -32,7 +32,7 @@ type Message struct {
 
 var users []user
 
-var maxSize int = 10
+var maxSize int = 128
 
 func init() {
 	orm.RegisterDriver("mysql", orm.DRMySQL)
@@ -106,7 +106,7 @@ func handleClient(conn net.Conn) {
 			if stop {
 				return
 			}
-		case <-time.After(time.Second * 30):
+		case <-time.After(time.Second * 90):
 			fmt.Println("连接中断")
 			return
 		}
@@ -127,15 +127,11 @@ func readConn(conn net.Conn, readChan chan<- []string, stopChan chan<- bool) {
 		length, err := strconv.Atoi(string(l))
 		if err != nil {
 			fmt.Println(err)
-
 		}
 		fmt.Println("实际长度:" + string(length))
 		_, err = conn.Read(dataTemp)
-		if err != nil {
+		if err != nil || n == 0 {
 			fmt.Println(err)
-			stopChan <- true
-		}
-		if n == 0 {
 			stopChan <- true
 		}
 		fmt.Println("数据体：" + string(dataTemp))
@@ -146,16 +142,16 @@ func readConn(conn net.Conn, readChan chan<- []string, stopChan chan<- bool) {
 			for i := 0; i < length/maxSize; i++ {
 				if i+1 == length/maxSize {
 					dataTemp := make([]byte, length%maxSize)
-					_, err = conn.Read(dataTemp)
-					if err != nil {
+					n, err = conn.Read(dataTemp)
+					if err != nil || n == 0 {
 						fmt.Println(err)
 						stopChan <- true
 					}
 					fmt.Println("最后一次循环：" + string(dataTemp))
 					data = append(data, dataTemp...)
 				} else {
-					_, err = conn.Read(dataTemp)
-					if err != nil {
+					n, err = conn.Read(dataTemp)
+					if err != nil || n == 0 {
 						fmt.Println(err)
 						stopChan <- true
 					}
@@ -176,17 +172,23 @@ func writeLoginConn(conn net.Conn, writeChan <-chan []string, stopChan chan<- bo
 	for {
 		array := <-writeChan
 		*name = array[1]
+		flag := true
 		for i, v := range users {
 			if array[1] == v.Name && v.conn == nil {
 				users[i].conn = conn
 				_, err := conn.Write([]byte(request("login;" + "1;")))
 				checkError(err)
 				check(*name, conn)
+				flag = false
 			} else if array[1] == v.Name && v.conn != nil {
 				_, err := conn.Write([]byte(request("login;" + "2;")))
 				checkError(err)
-				check(*name, conn)
+				flag = false
 			}
+		}
+		if flag {
+			_, err := conn.Write([]byte(request("login;" + "3;")))
+			checkError(err)
 		}
 	}
 }
@@ -205,13 +207,13 @@ func writeRegisterConn(conn net.Conn, writeChan <-chan []string, stopChan chan<-
 				checkError(err)
 				//stopChan <- true
 			} else {
-				_, err := conn.Write([]byte(request("register;" + "0;")))
+				_, err := conn.Write([]byte(request("register;" + "2;")))
 				checkError(err)
 				continue
 			}
 		} else {
 			o.Rollback()
-			_, err := conn.Write([]byte(request("register;" + "-1;")))
+			_, err := conn.Write([]byte(request("register;" + "3;")))
 			checkError(err)
 		}
 	}
@@ -265,7 +267,7 @@ func writeManyConn(conn net.Conn, writeChan <-chan []string, stopChan chan<- boo
 		} else {
 			for _, v := range users {
 				if v.conn != nil {
-					_, err := v.conn.Write([]byte(request("message;" + array[1] + ";" + array[2] + ";")))
+					_, err := v.conn.Write([]byte(request("message;" + array[1] + array[2] + ";")))
 					checkError(err)
 				}
 			}
