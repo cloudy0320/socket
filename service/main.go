@@ -90,7 +90,16 @@ func handleClient(conn net.Conn) {
 				writeOneChan <- array
 			} else if array[0] == "many" {
 				writeManyChan <- array
+			} else if array[0] == "reconnect" {
+				for i, v := range users {
+					if array[1] == v.Name {
+						users[i].conn = conn
+						check(array[1], conn)
+					}
+				}
 			} else if array[0] == "heart" {
+				_, err := conn.Write([]byte(request("heart;")))
+				checkError(err)
 				continue
 			}
 		case stop := <-stopChan:
@@ -170,12 +179,11 @@ func writeLoginConn(conn net.Conn, writeChan <-chan []string, stopChan chan<- bo
 		for i, v := range users {
 			if array[1] == v.Name && v.conn == nil {
 				users[i].conn = conn
-				_, err := conn.Write([]byte("1"))
+				_, err := conn.Write([]byte(request("login;" + "1;")))
 				checkError(err)
 				check(*name, conn)
 			} else if array[1] == v.Name && v.conn != nil {
-				users[i].conn = conn
-				_, err := conn.Write([]byte("2"))
+				_, err := conn.Write([]byte(request("login;" + "2;")))
 				checkError(err)
 				check(*name, conn)
 			}
@@ -193,17 +201,17 @@ func writeRegisterConn(conn net.Conn, writeChan <-chan []string, stopChan chan<-
 		if created, _, err := o.ReadOrCreate(&u, "Name"); err == nil {
 			if created {
 				o.Commit()
-				_, err = conn.Write([]byte("1"))
+				_, err := conn.Write([]byte(request("register;" + "1;")))
 				checkError(err)
 				//stopChan <- true
 			} else {
-				_, err = conn.Write([]byte("0"))
+				_, err := conn.Write([]byte(request("register;" + "0;")))
 				checkError(err)
 				continue
 			}
 		} else {
 			o.Rollback()
-			_, err = conn.Write([]byte("-1"))
+			_, err := conn.Write([]byte(request("register;" + "-1;")))
 			checkError(err)
 		}
 	}
@@ -215,7 +223,7 @@ func writeOneConn(conn net.Conn, writeChan <-chan []string, stopChan chan<- bool
 		if len(array) == 4 {
 			for _, v := range users {
 				if array[2] == v.Name && v.conn != nil {
-					_, err := v.conn.Write([]byte(*name + "对你说" + array[1]))
+					_, err := v.conn.Write([]byte(request("message;" + *name + ";对你说;" + array[1] + ";")))
 					checkError(err)
 				} else if array[2] == v.Name && v.conn == nil {
 					o := orm.NewOrm()
@@ -250,14 +258,14 @@ func writeManyConn(conn net.Conn, writeChan <-chan []string, stopChan chan<- boo
 				}
 			}
 			list := strings.Join(online, "\n")
-			_, err := conn.Write([]byte(list))
+			_, err := conn.Write([]byte(request("message;" + list + ";")))
 			checkError(err)
 		} else if array[2] == "/change" {
 			continue
 		} else {
 			for _, v := range users {
 				if v.conn != nil {
-					_, err := v.conn.Write([]byte(array[1] + array[2]))
+					_, err := v.conn.Write([]byte(request("message;" + array[1] + ";" + array[2] + ";")))
 					checkError(err)
 				}
 			}
@@ -314,6 +322,12 @@ func check(name string, conn net.Conn) {
 		}
 		response = append(response, "以上是离线信息")
 		s := strings.Join(response, "\n")
-		conn.Write([]byte(s))
+		_, err = conn.Write([]byte(request("message;" + s + ";")))
+		checkError(err)
 	}
+}
+
+func request(s string) string {
+	msgLen := fmt.Sprintf("%04s", strconv.Itoa(len(s)))
+	return msgLen + s
 }

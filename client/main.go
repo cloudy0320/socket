@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"reflect"
 	"strconv"
 	"time"
 )
@@ -17,11 +18,24 @@ var (
 )
 
 func main() {
-	address, err := net.ResolveTCPAddr("tcp", ":1200")
+	address, err := net.ResolveTCPAddr("tcp", "192.168.3.166:1200")
 	checkError(err)
 	conn, err := net.DialTCP("tcp", nil, address)
 	checkError(err)
+
+	inputChan := make(chan string)
+	readChan := make(chan []string)
+	loginChan := make(chan string)
+	registerChan := make(chan string)
+	stopChan := make(chan bool)
+
+	go input()
 	go heart(conn)
+	go receive(conn)
+	go login(conn, loginChan)
+	go register()
+	go input(inputChan, loginChan, registerChan)
+
 	recvData := make([]byte, 128)
 	kind = "login"
 	for {
@@ -33,8 +47,10 @@ func main() {
 			fmt.Println("只能输入1和2")
 			continue
 		}
-		if flag == "2" {
-			kind = "register"
+		if flag == "1" {
+			inputChan <- "login"
+		} else if flag == "2" {
+			inputChan <- "register"
 		}
 		break
 	}
@@ -73,6 +89,86 @@ func main() {
 				fmt.Println("这个名称已经被注册了")
 				continue
 			} else {
+				for {
+					recvData = make([]byte, 128)
+					fmt.Print("输入你的姓名:")
+					_, err = fmt.Scanln(&name)
+					checkError(err)
+					_, err = conn.Write([]byte(request(kind + ";" + name + ";")))
+					checkError(err)
+					for {
+						recvData = make([]byte, 128)
+						fmt.Print("输入你的姓名:")
+						_, err = fmt.Scanln(&name)
+						checkError(err)
+						_, err = conn.Write([]byte(request(kind + ";" + name + ";")))
+						checkError(err)
+						n, err := conn.Read(recvData)
+						if err != nil {
+							fmt.Println("好像哪里出错了")
+							os.Exit(0)
+						}
+						if n == 0 {
+							fmt.Println("服务器和你断开了链接")
+							os.Exit(0)
+						}
+						if flag == "1" {
+							if string(recvData[0]) == "1" {
+								fmt.Println("您已成功登陆 " + name)
+								break
+							} else if string(recvData[0]) == "0" {
+								fmt.Println("没有这个名称，请先去注册")
+								continue
+							} else if string(recvData[0]) == "2" {
+								fmt.Println("这个号已经被登录了")
+								continue
+							}
+						} else if flag == "2" {
+							if string(recvData[0]) == "1" {
+								fmt.Println("您已成功注册" + name)
+								break
+							} else if string(recvData[0]) == "0" {
+								fmt.Println("这个名称已经被注册了")
+								continue
+							} else {
+								fmt.Println("服务器好像有点问题")
+								continue
+							}
+						}
+					}
+					n, err := conn.Read(recvData)
+					if err != nil {
+						fmt.Println("好像哪里出错了")
+						os.Exit(0)
+					}
+					if n == 0 {
+						fmt.Println("服务器和你断开了链接")
+						os.Exit(0)
+					}
+					if flag == "1" {
+						if string(recvData[0]) == "1" {
+							fmt.Println("您已成功登陆 " + name)
+							break
+						} else if string(recvData[0]) == "0" {
+							fmt.Println("没有这个名称，请先去注册")
+							continue
+						} else if string(recvData[0]) == "2" {
+							fmt.Println("这个号已经被登录了")
+							continue
+						}
+					} else if flag == "2" {
+						if string(recvData[0]) == "1" {
+							fmt.Println("您已成功注册" + name)
+							break
+						} else if string(recvData[0]) == "0" {
+							fmt.Println("这个名称已经被注册了")
+							continue
+						} else {
+							fmt.Println("服务器好像有点问题")
+							continue
+						}
+					}
+				}
 				fmt.Println("服务器好像有点问题")
 				continue
 			}
@@ -89,7 +185,7 @@ func main() {
 		}
 		break
 	}
-	go receive(conn)
+
 	ch := make(chan int)
 	if flag == "1" {
 		go many(conn, ch)
@@ -103,6 +199,7 @@ func main() {
 func checkError(err error) {
 	if err != nil {
 		_, err := fmt.Fprintf(os.Stderr, "Fatal error: %s", err.Error())
+		reflect.ValueOf(err)
 		checkError(err)
 		os.Exit(1)
 	}
@@ -183,13 +280,13 @@ func heart(conn net.Conn) {
 		if err != nil {
 			fmt.Println("连接好像出了点问题，正在尝试重连")
 			for {
-				address, err := net.ResolveTCPAddr("tcp", ":1200")
+				address, err := net.ResolveTCPAddr("tcp", "192.168.3.166:1200")
 				checkError(err)
 				conn, err = net.DialTCP("tcp", nil, address)
 				fmt.Println(err)
 				if err == nil {
 					if name != "" {
-						_, err = conn.Write([]byte(request(kind + ";" + name + ";")))
+						_, err = conn.Write([]byte(request("reconnect" + ";" + name + ";")))
 						checkError(err)
 					}
 					break
@@ -199,5 +296,170 @@ func heart(conn net.Conn) {
 			fmt.Println("心跳检测")
 		}
 		time.Sleep(10 * time.Second)
+	}
+}
+
+func login(conn net.Conn, loginChan <-chan string) {
+	<-loginChan
+	for {
+		recvData := make([]byte, 128)
+		fmt.Print("输入你的姓名:")
+		_, err := fmt.Scanln(&name)
+		checkError(err)
+		_, err = conn.Write([]byte(request(kind + ";" + name + ";")))
+		checkError(err)
+		n, err := conn.Read(recvData)
+		if err != nil {
+			fmt.Println("好像哪里出错了")
+			os.Exit(0)
+		}
+		if n == 0 {
+			fmt.Println("服务器和你断开了链接")
+			os.Exit(0)
+		}
+		if string(recvData[0]) == "1" {
+			fmt.Println("您已成功登陆 " + name)
+			break
+		} else if string(recvData[0]) == "0" {
+			fmt.Println("没有这个名称，请先去注册")
+			continue
+		} else if string(recvData[0]) == "2" {
+			fmt.Println("这个号已经被登录了")
+			continue
+		}
+	}
+}
+
+func register() {
+	for {
+		recvData = make([]byte, 128)
+		fmt.Print("输入你的姓名:")
+		_, err = fmt.Scanln(&name)
+		checkError(err)
+		_, err = conn.Write([]byte(request(kind + ";" + name + ";")))
+		checkError(err)
+		n, err := conn.Read(recvData)
+		if err != nil {
+			fmt.Println("好像哪里出错了")
+			os.Exit(0)
+		}
+		if n == 0 {
+			fmt.Println("服务器和你断开了链接")
+			os.Exit(0)
+		}
+		if flag == "1" {
+			if string(recvData[0]) == "1" {
+				fmt.Println("您已成功登陆 " + name)
+				break
+			} else if string(recvData[0]) == "0" {
+				fmt.Println("没有这个名称，请先去注册")
+				continue
+			} else if string(recvData[0]) == "2" {
+				fmt.Println("这个号已经被登录了")
+				continue
+			}
+		} else if flag == "2" {
+			if string(recvData[0]) == "1" {
+				fmt.Println("您已成功注册" + name)
+				break
+			} else if string(recvData[0]) == "0" {
+				fmt.Println("这个名称已经被注册了")
+				continue
+			} else {
+				for {
+					recvData = make([]byte, 128)
+					fmt.Print("输入你的姓名:")
+					_, err = fmt.Scanln(&name)
+					checkError(err)
+					_, err = conn.Write([]byte(request(kind + ";" + name + ";")))
+					checkError(err)
+					for {
+						recvData = make([]byte, 128)
+						fmt.Print("输入你的姓名:")
+						_, err = fmt.Scanln(&name)
+						checkError(err)
+						_, err = conn.Write([]byte(request(kind + ";" + name + ";")))
+						checkError(err)
+						n, err := conn.Read(recvData)
+						if err != nil {
+							fmt.Println("好像哪里出错了")
+							os.Exit(0)
+						}
+						if n == 0 {
+							fmt.Println("服务器和你断开了链接")
+							os.Exit(0)
+						}
+						if flag == "1" {
+							if string(recvData[0]) == "1" {
+								fmt.Println("您已成功登陆 " + name)
+								break
+							} else if string(recvData[0]) == "0" {
+								fmt.Println("没有这个名称，请先去注册")
+								continue
+							} else if string(recvData[0]) == "2" {
+								fmt.Println("这个号已经被登录了")
+								continue
+							}
+						} else if flag == "2" {
+							if string(recvData[0]) == "1" {
+								fmt.Println("您已成功注册" + name)
+								break
+							} else if string(recvData[0]) == "0" {
+								fmt.Println("这个名称已经被注册了")
+								continue
+							} else {
+								fmt.Println("服务器好像有点问题")
+								continue
+							}
+						}
+					}
+					n, err := conn.Read(recvData)
+					if err != nil {
+						fmt.Println("好像哪里出错了")
+						os.Exit(0)
+					}
+					if n == 0 {
+						fmt.Println("服务器和你断开了链接")
+						os.Exit(0)
+					}
+					if flag == "1" {
+						if string(recvData[0]) == "1" {
+							fmt.Println("您已成功登陆 " + name)
+							break
+						} else if string(recvData[0]) == "0" {
+							fmt.Println("没有这个名称，请先去注册")
+							continue
+						} else if string(recvData[0]) == "2" {
+							fmt.Println("这个号已经被登录了")
+							continue
+						}
+					} else if flag == "2" {
+						if string(recvData[0]) == "1" {
+							fmt.Println("您已成功注册" + name)
+							break
+						} else if string(recvData[0]) == "0" {
+							fmt.Println("这个名称已经被注册了")
+							continue
+						} else {
+							fmt.Println("服务器好像有点问题")
+							continue
+						}
+					}
+				}
+				fmt.Println("服务器好像有点问题")
+				continue
+			}
+		}
+	}
+}
+
+func input(inputChan <-chan string, loginChan chan<- string, registerChan chan<- string) {
+	select {
+	case str := <-inputChan:
+		if str == "login" {
+			loginChan <- "1"
+		} else if str == "register" {
+			registerChan <- "1"
+		}
 	}
 }
