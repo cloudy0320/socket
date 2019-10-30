@@ -128,9 +128,6 @@ func readConn(conn net.Conn, readChan chan<- []string, stopChan chan<- bool) {
 		}
 		length, err := strconv.Atoi(string(l))
 		data := make([]byte, length)
-		if err != nil {
-			fmt.Println(err)
-		}
 		_, err = conn.Read(data)
 		if err != nil || n == 0 {
 			fmt.Println(err)
