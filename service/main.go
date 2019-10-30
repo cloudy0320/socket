@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,6 +34,8 @@ type Message struct {
 var users []user
 
 var maxSize int = 128
+
+var lock sync.Mutex
 
 func init() {
 	orm.RegisterDriver("mysql", orm.DRMySQL)
@@ -93,7 +96,9 @@ func handleClient(conn net.Conn) {
 			} else if array[0] == "reconnect" {
 				for i, v := range users {
 					if array[1] == v.Name {
+						lock.Lock()
 						users[i].conn = conn
+						lock.Unlock()
 						check(array[1], conn)
 					}
 				}
@@ -116,51 +121,23 @@ func handleClient(conn net.Conn) {
 func readConn(conn net.Conn, readChan chan<- []string, stopChan chan<- bool) {
 	for {
 		l := make([]byte, 4)
-		dataTemp := make([]byte, maxSize)
-		data := make([]byte, 0)
 		n, err := conn.Read(l)
 		if err != nil || n == 0 {
 			fmt.Println(err)
 			stopChan <- true
 		}
-		fmt.Println("读取的长度：" + string(l))
 		length, err := strconv.Atoi(string(l))
+		data := make([]byte, length)
 		if err != nil {
 			fmt.Println(err)
 		}
-		fmt.Println("实际长度:" + string(length))
-		_, err = conn.Read(dataTemp)
+		_, err = conn.Read(data)
 		if err != nil || n == 0 {
 			fmt.Println(err)
 			stopChan <- true
 		}
-		fmt.Println("数据体：" + string(dataTemp))
-		if length <= maxSize {
-			data = dataTemp[:length]
-		} else {
-			data = append(data, dataTemp...)
-			for i := 0; i < length/maxSize; i++ {
-				if i+1 == length/maxSize {
-					dataTemp := make([]byte, length%maxSize)
-					n, err = conn.Read(dataTemp)
-					if err != nil || n == 0 {
-						fmt.Println(err)
-						stopChan <- true
-					}
-					fmt.Println("最后一次循环：" + string(dataTemp))
-					data = append(data, dataTemp...)
-				} else {
-					n, err = conn.Read(dataTemp)
-					if err != nil || n == 0 {
-						fmt.Println(err)
-						stopChan <- true
-					}
-					data = append(data, dataTemp...)
-				}
-			}
-		}
-		array := make([]string, 128)
-		array = strings.Split(string(data), ";")
+		fmt.Println(string(data))
+		array := strings.Split(string(data), ";")
 
 		fmt.Println("Received:", array)
 
@@ -175,7 +152,9 @@ func writeLoginConn(conn net.Conn, writeChan <-chan []string, stopChan chan<- bo
 		flag := true
 		for i, v := range users {
 			if array[1] == v.Name && v.conn == nil {
+				lock.Lock()
 				users[i].conn = conn
+				lock.Unlock()
 				_, err := conn.Write([]byte(request("login;" + "1;")))
 				checkError(err)
 				check(*name, conn)
@@ -203,6 +182,9 @@ func writeRegisterConn(conn net.Conn, writeChan <-chan []string, stopChan chan<-
 		if created, _, err := o.ReadOrCreate(&u, "Name"); err == nil {
 			if created {
 				o.Commit()
+				lock.Lock()
+				users = append(users, user{u, conn})
+				lock.Unlock()
 				_, err := conn.Write([]byte(request("register;" + "1;")))
 				checkError(err)
 				//stopChan <- true
@@ -222,25 +204,21 @@ func writeRegisterConn(conn net.Conn, writeChan <-chan []string, stopChan chan<-
 func writeOneConn(conn net.Conn, writeChan <-chan []string, stopChan chan<- bool, name *string) {
 	for {
 		array := <-writeChan
-		if len(array) == 4 {
-			for _, v := range users {
-				if array[2] == v.Name && v.conn != nil {
-					_, err := v.conn.Write([]byte(request("message;" + *name + ";对你说;" + array[1] + ";")))
-					checkError(err)
-				} else if array[2] == v.Name && v.conn == nil {
-					o := orm.NewOrm()
-					o.Begin()
-					m := Message{Text: array[1], To: &v.User, From: *name}
-					_, err := o.Insert(&m)
-					if err != nil {
-						o.Rollback()
-					} else {
-						o.Commit()
-					}
+		for _, v := range users {
+			if array[2] == v.Name && v.conn != nil {
+				_, err := v.conn.Write([]byte(request("message;" + array[3] + "对你说" + array[1])))
+				checkError(err)
+			} else if array[2] == v.Name && v.conn == nil {
+				o := orm.NewOrm()
+				o.Begin()
+				m := Message{Text: array[1], To: &v.User, From: *name}
+				_, err := o.Insert(&m)
+				if err != nil {
+					o.Rollback()
+				} else {
+					o.Commit()
 				}
 			}
-		} else {
-			continue
 		}
 	}
 }
@@ -286,7 +264,9 @@ func del(conn net.Conn) {
 	fmt.Println(conn.RemoteAddr().String() + "已经断开")
 	for i, v := range users {
 		if v.conn == conn {
+			lock.Lock()
 			users[i].conn = nil
+			lock.Unlock()
 		}
 	}
 }
@@ -298,7 +278,9 @@ func get() {
 	_, err := o.QueryTable("user").All(&usersData)
 	for _, v := range usersData {
 		userTemp.User = v
+		lock.Lock()
 		users = append(users, *userTemp)
+		lock.Unlock()
 	}
 	if err != nil {
 		fmt.Println("获取数据库失败")
